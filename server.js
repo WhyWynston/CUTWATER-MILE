@@ -8,11 +8,18 @@ const { createApp } = require('./src/app');
 const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 fs.mkdirSync(dataDir, { recursive: true });
 
+if (!process.env.APPROVER_PASSWORD) {
+  console.warn('APPROVER_PASSWORD is not set: nobody can approve check-ins until it is.');
+}
+
 const app = createApp({
   database: openDb(path.join(dataDir, 'attendance.db')),
   uploadDir: path.join(dataDir, 'uploads'),
-  trackLength: Number(process.env.TRACK_LENGTH) || 20,
-  adminToken: process.env.ADMIN_TOKEN,
+  approverPassword: process.env.APPROVER_PASSWORD,
+  // Without a fixed secret, approvers are signed out whenever the server restarts.
+  sessionSecret: process.env.SESSION_SECRET,
+  // Set when running behind a hosting proxy (Railway, Render, Fly) so cookies are marked Secure.
+  trustProxy: process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY : false,
 });
 
 const port = Number(process.env.PORT) || 3000;

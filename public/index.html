@@ -1,67 +1,113 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cutwater Mile</title>
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cutwater Mile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div class="wrap">
   <header>
-    <h1>CUTWATER <span>MILE</span></h1>
-    <p class="tagline">Show up. Snap a photo with Miguel or Frida. Move up the track.<br />
-      Last place runs the <strong>milk mile</strong>. 🥛</p>
+    <p class="eyebrow">Advisor attendance race · Fall season</p>
+    <h1>Cutwater <span>Mile</span></h1>
+    <p class="lede">Come to a work session, take a photo with Miguel or Frida, and once they approve it you move up the track. Whoever has the fewest sessions when the semester ends in December runs the milk mile.</p>
   </header>
 
-  <main>
-    <section class="card track-card" aria-labelledby="track-title">
-      <h2 id="track-title">The Race</h2>
-      <p class="muted" id="track-meta"></p>
-      <div class="track-wrap">
-        <svg id="track" viewBox="0 0 800 440" role="img" aria-label="Race track showing each advisor's progress"></svg>
-      </div>
-    </section>
+  <section class="panel track" aria-labelledby="track-h">
+    <div class="panel-head">
+      <h2 id="track-h">The race</h2>
+      <p class="meta" id="track-meta"></p>
+    </div>
+    <svg id="track" viewBox="0 0 800 440" role="img" aria-label="Race track showing each advisor's progress"></svg>
+    <div class="bibs" id="bibs"></div>
+  </section>
 
-    <section class="card" aria-labelledby="board-title">
-      <h2 id="board-title">Standings</h2>
-      <ol id="leaderboard" class="leaderboard"></ol>
-    </section>
+  <section class="panel" id="queue-panel" aria-labelledby="queue-h" hidden>
+    <div class="panel-head">
+      <h2 id="queue-h">Waiting for approval</h2>
+      <p class="meta" id="queue-meta"></p>
+    </div>
+    <p class="notice">Check that each photo is real and was taken at the session. Tap a photo to see it larger.</p>
+    <div class="queue" id="queue"></div>
+  </section>
 
-    <section class="card" aria-labelledby="checkin-title">
-      <h2 id="checkin-title">Log a Work Session</h2>
-      <form id="checkin-form">
-        <label class="field">
-          <span>Photo</span>
-          <input type="file" name="photo" accept="image/*" capture="environment" required />
+  <div class="two-col">
+    <section class="panel" aria-labelledby="log-h">
+      <h2 id="log-h">Log a session</h2>
+      <p class="notice" id="form-notice" hidden></p>
+      <form id="checkin" novalidate>
+        <label class="photo-drop" id="drop">
+          <input type="file" id="photo" name="photo" accept="image/*">
+          <img id="preview" alt="Selected photo" hidden>
+          <span id="drop-text"><strong>Choose the photo</strong><br>taken with Miguel or Frida</span>
         </label>
-        <img id="preview" class="preview" alt="" hidden />
 
         <fieldset class="field">
-          <legend>Who's in the photo?</legend>
-          <div id="advisor-options" class="chips"></div>
+          <legend>Who's in the photo</legend>
+          <div class="chips" id="advisor-chips"></div>
         </fieldset>
 
         <fieldset class="field">
           <legend>Taken with</legend>
-          <div id="witness-options" class="chips"></div>
+          <div class="chips" id="witness-chips"></div>
         </fieldset>
 
-        <label class="field">
-          <span>Work session date</span>
-          <input type="date" name="sessionDate" required />
-        </label>
+        <div class="field">
+          <label class="label" for="date">Session date</label>
+          <input type="date" id="date" name="date">
+        </div>
 
-        <button type="submit">Check in 🏁</button>
-        <p id="form-status" class="status" role="status"></p>
+        <button type="submit" id="submit">Check in</button>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
       </form>
     </section>
 
-    <section class="card" aria-labelledby="feed-title">
-      <h2 id="feed-title">Photo Finish</h2>
-      <div id="feed" class="feed"></div>
+    <section class="panel" aria-labelledby="rules-h">
+      <h2 id="rules-h">Race rules</h2>
+      <ul class="rules">
+        <li><strong>Attendance moves you.</strong> Every approved session counts. The advisor with the most sessions leads the track, and everyone else sits behind in proportion, so positions shift up and down as the counts change.</li>
+        <li><strong>Photo or it didn't happen.</strong> Every check-in needs a photo with Miguel or Frida.</li>
+        <li><strong>Miguel or Frida approve every photo.</strong> A check-in counts only after one of them approves it, so AI-made or reused photos don't count.</li>
+        <li><strong>Group photos count for everyone in them.</strong> Tick every advisor who's in the shot.</li>
+        <li><strong>One check-in per person per day.</strong> A second photo from the same day won't count twice.</li>
+        <li><strong>The milk mile.</strong> Whoever has the fewest approved sessions when the semester ends runs four laps and drinks a pint of milk before each one. A tie for last means everyone tied runs it.</li>
+      </ul>
     </section>
-  </main>
+  </div>
 
-  <script src="app.js"></script>
+  <section class="panel" aria-labelledby="feed-h">
+    <div class="panel-head">
+      <h2 id="feed-h">Photo finish</h2>
+      <p class="meta" id="feed-meta"></p>
+    </div>
+    <div class="feed" id="feed"></div>
+  </section>
+
+  <section class="panel" id="approver-panel" aria-labelledby="approver-h">
+    <h2 id="approver-h">Approver login</h2>
+    <p class="notice" id="approver-intro">For Miguel and Frida. Log in to approve or reject photos.</p>
+    <form id="login" novalidate>
+      <fieldset class="field">
+        <legend>I'm</legend>
+        <div class="chips" id="approver-chips"></div>
+      </fieldset>
+      <div class="field">
+        <label class="label" for="password">Approver password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password">
+      </div>
+      <button type="submit" id="login-submit">Log in</button>
+      <p class="status" id="login-status" role="status" aria-live="polite"></p>
+    </form>
+    <div id="logged-in" class="logged-in" hidden>
+      <p class="notice" id="logged-in-text"></p>
+      <button type="button" id="logout" class="secondary">Log out</button>
+    </div>
+  </section>
+</div>
+<script src="app.js"></script>
 </body>
 </html>

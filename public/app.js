@@ -1,227 +1,400 @@
 'use strict';
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const COLORS = { ethelyn: 'var(--ethelyn)', alok: 'var(--alok)', jaansi: 'var(--jaansi)' };
-const colorFor = (id) => COLORS[id] || 'var(--accent)';
+(() => {
+  const COLORS = { alok: 'var(--alok)', ethelyn: 'var(--ethelyn)', jaansi: 'var(--jaansi)' };
+  const colorFor = (id) => COLORS[id] || 'var(--accent)';
 
-// Track geometry: a stadium (two straights joined by semicircles), 3 lanes.
-const TRACK = { cx: 400, cy: 220, halfStraight: 190, laneRadii: [175, 140, 105], laneWidth: 35 };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const TRACK = { cx: 400, cy: 220, halfStraight: 190, laneRadii: [175, 140, 105], laneWidth: 35 };
 
-const $ = (sel) => document.querySelector(sel);
+  const $ = (id) => document.getElementById(id);
+  const state = { advisors: [], approvers: [], approver: null, standings: [], held: 0, checkins: [] };
 
-function el(tag, attrs = {}, text) {
-  const node = tag.startsWith('svg:')
-    ? document.createElementNS(SVG_NS, tag.slice(4))
-    : document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+  function el(tag, attrs, text) {
+    const svg = tag.startsWith('svg:');
+    const node = svg ? document.createElementNS(SVG_NS, tag.slice(4)) : document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
 
-/** Lane path starting at the finish line (bottom centre), running counter-clockwise. */
-function lanePath(r) {
-  const { cx, cy, halfStraight: L } = TRACK;
-  return [
-    `M ${cx} ${cy + r}`,
-    `L ${cx + L} ${cy + r}`,
-    `A ${r} ${r} 0 0 0 ${cx + L} ${cy - r}`,
-    `L ${cx - L} ${cy - r}`,
-    `A ${r} ${r} 0 0 0 ${cx - L} ${cy + r}`,
-    'Z',
-  ].join(' ');
-}
+  function localToday() {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 10);
+  }
+  function fmtDate(iso) {
+    return new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  function listNames(names) {
+    return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  }
+  function ordinal(n) {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
 
-function drawTrack(svg, standings) {
-  svg.replaceChildren();
-  const { cx, cy, laneRadii, laneWidth } = TRACK;
-  const outer = laneRadii[0] + laneWidth / 2;
-  const inner = laneRadii[laneRadii.length - 1] - laneWidth / 2;
+  async function api(url, options) {
+    const res = await fetch(url, { credentials: 'same-origin', ...options });
+    const body = res.status === 204 ? null : await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = new Error(body?.error || `Request failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
 
-  // Surface, lane lines, infield.
-  svg.append(el('svg:path', { d: lanePath(outer), fill: 'var(--track)' }));
-  laneRadii.forEach((r, i) => {
-    if (i > 0) {
+  // ---------- Track ----------
+  function lanePath(r) {
+    const { cx, cy, halfStraight: L } = TRACK;
+    return `M ${cx} ${cy + r} L ${cx + L} ${cy + r} A ${r} ${r} 0 0 0 ${cx + L} ${cy - r} ` +
+           `L ${cx - L} ${cy - r} A ${r} ${r} 0 0 0 ${cx - L} ${cy + r} Z`;
+  }
+
+  function drawTrackBase(svg) {
+    const { cx, cy, laneRadii, laneWidth } = TRACK;
+    const outer = laneRadii[0] + laneWidth / 2;
+    const inner = laneRadii[laneRadii.length - 1] - laneWidth / 2;
+    svg.append(el('svg:path', { d: lanePath(outer), fill: 'var(--track)' }));
+    for (let i = 1; i < laneRadii.length; i++) {
       svg.append(el('svg:path', {
-        d: lanePath(r + laneWidth / 2), fill: 'none', stroke: 'var(--line)',
-        'stroke-width': 2, 'stroke-dasharray': '10 8', opacity: 0.6,
+        d: lanePath(laneRadii[i] + laneWidth / 2), fill: 'none', stroke: 'var(--track-line)',
+        'stroke-width': 2, 'stroke-dasharray': '12 9', opacity: 0.7,
       }));
     }
-  });
-  svg.append(el('svg:path', { d: lanePath(inner), fill: 'var(--infield)', stroke: 'var(--line)', 'stroke-width': 3 }));
-  svg.append(el('svg:path', { d: lanePath(outer), fill: 'none', stroke: 'var(--line)', 'stroke-width': 3 }));
+    svg.append(el('svg:path', { d: lanePath(inner), fill: 'var(--infield)', stroke: 'var(--track-line)', 'stroke-width': 3 }));
+    svg.append(el('svg:path', { d: lanePath(outer), fill: 'none', stroke: 'var(--track-line)', 'stroke-width': 3 }));
 
-  // Checkered start/finish line.
-  const squares = 8;
-  const size = (outer - inner) / squares;
-  for (let row = 0; row < squares; row++) {
-    for (let col = 0; col < 2; col++) {
-      svg.append(el('svg:rect', {
-        x: cx - size + col * size, y: cy + inner + row * size, width: size, height: size,
-        fill: (row + col) % 2 ? '#111' : '#fff',
-      }));
+    const n = 8, size = (outer - inner) / n;
+    for (let row = 0; row < n; row++) {
+      for (let col = 0; col < 2; col++) {
+        svg.append(el('svg:rect', {
+          x: cx - size + col * size, y: cy + inner + row * size, width: size, height: size,
+          fill: (row + col) % 2 ? '#111111' : '#ffffff',
+        }));
+      }
     }
+    svg.append(el('svg:text', {
+      x: cx, y: cy - 4, 'text-anchor': 'middle', fill: 'var(--track-line)',
+      'font-family': 'Saira Condensed, Arial Narrow, sans-serif', 'font-weight': 800,
+      'font-style': 'italic', 'font-size': 44, opacity: 0.9,
+    }, 'CUTWATER MILE'));
+    svg.append(el('svg:text', {
+      x: cx, y: cy + 28, 'text-anchor': 'middle', fill: 'var(--track-line)',
+      'font-family': 'Barlow, system-ui, sans-serif', 'font-size': 16, opacity: 0.8,
+    }, 'Most sessions attended leads'));
+
+    TRACK.lanes = TRACK.laneRadii.map((r) => {
+      const p = el('svg:path', { d: lanePath(r), fill: 'none', stroke: 'none' });
+      svg.append(p);
+      return p;
+    });
+    TRACK.runnersLayer = el('svg:g');
+    svg.append(TRACK.runnersLayer);
   }
 
-  const title = el('svg:text', {
-    x: cx, y: cy + 8, 'text-anchor': 'middle', fill: 'var(--line)',
-    'font-size': 30, 'font-weight': 800, 'font-style': 'italic', opacity: 0.85,
-  }, 'CUTWATER MILE');
-  svg.append(title);
-  svg.append(el('svg:text', {
-    x: cx, y: cy + 36, 'text-anchor': 'middle', fill: 'var(--line)', 'font-size': 14, opacity: 0.7,
-  }, `🏁 finish = ${state.trackLength} sessions`));
-
-  // Runners: lane assignment is fixed by advisor so nobody hops lanes as ranks change.
-  const laneOrder = [...standings].sort((a, b) => a.id.localeCompare(b.id));
-  laneOrder.forEach((s, i) => {
-    const lane = el('svg:path', { d: lanePath(laneRadii[i]) });
-    svg.append(lane);
-    const total = lane.getTotalLength();
-    // Stay just shy of the line at 100% so finishers sit at the flag, not back at the start.
-    const p = lane.getPointAtLength(Math.min(s.progress, 0.999) * total);
-    lane.remove();
-
-    const g = el('svg:g', { class: 'runner', transform: `translate(${p.x} ${p.y})` });
-    g.append(el('svg:title', {}, `${s.name}: ${s.sessions} session${s.sessions === 1 ? '' : 's'}`));
-    g.append(el('svg:circle', { r: 22, fill: colorFor(s.id) }));
-    g.append(el('svg:text', { 'text-anchor': 'middle', dy: 8, fill: '#111' }, s.name[0]));
-    if (s.milkMile) {
-      g.append(el('svg:text', { x: 22, y: -16, 'font-size': 28 }, '🥛'));
-    }
-    svg.append(g);
-  });
-}
-
-function drawLeaderboard(list, standings) {
-  list.replaceChildren();
-  let rank = 0;
-  let prev = null;
-  standings.forEach((s, i) => {
-    if (s.sessions !== prev) rank = i + 1;
-    prev = s.sessions;
-    const li = el('li', { style: `--c: ${colorFor(s.id)}` });
-    if (s.milkMile) li.classList.add('milk');
-    li.append(el('span', { class: 'pos' }, String(rank)));
-    const name = el('span', { class: 'name' }, s.name + (s.milkMile ? ' 🥛' : ''));
-    name.append(el('span', { class: 'sub' },
-      s.milkMile ? 'On the hook for the milk mile'
-        : s.lastSession ? `Last seen ${formatDate(s.lastSession)}` : 'Not on the board yet'));
-    li.append(name);
-    li.append(el('span', { class: 'count' }, `${s.sessions}/${state.trackLength}`));
-    list.append(li);
-  });
-}
-
-function drawFeed(container, checkins) {
-  container.replaceChildren();
-  if (!checkins.length) {
-    container.append(el('p', { class: 'muted' }, 'No check-ins yet. Be the first!'));
-    return;
+  function drawRunners() {
+    const layer = TRACK.runnersLayer;
+    // Lanes are fixed per advisor so nobody hops lanes as ranks change.
+    state.advisors.forEach((a, lane) => {
+      const s = state.standings.find((r) => r.id === a.id);
+      if (!s || !TRACK.lanes[lane]) return;
+      const path = TRACK.lanes[lane];
+      const pt = path.getPointAtLength(s.position * path.getTotalLength());
+      let g = layer.querySelector(`[data-id="${a.id}"]`);
+      if (!g) {
+        g = el('svg:g', { class: 'runner', 'data-id': a.id });
+        g.append(el('svg:title'));
+        g.append(el('svg:circle', { r: 24, fill: colorFor(a.id) }));
+        g.append(el('svg:text', { class: 'initial', 'text-anchor': 'middle', dy: 9 }, a.name[0]));
+        g.append(el('svg:text', { class: 'milk', x: 24, y: -18 }, '🥛'));
+        layer.append(g);
+      }
+      g.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
+      g.querySelector('title').textContent = `${a.name}: ${s.sessions} session${s.sessions === 1 ? '' : 's'}`;
+      g.querySelector('.milk').style.display = s.milkMile ? '' : 'none';
+    });
   }
-  for (const c of checkins) {
-    const fig = el('figure');
+
+  function drawBibs() {
+    const box = $('bibs');
+    box.replaceChildren();
+    let place = 0, prev = null;
+    state.standings.forEach((r, i) => {
+      if (r.sessions !== prev) place = i + 1;
+      prev = r.sessions;
+      const bib = el('div', { class: 'bib' + (r.milkMile ? ' milk-flag' : ''), style: `--c: ${colorFor(r.id)}` });
+      const top = el('div', { class: 'bib-top' });
+      top.append(el('span', { class: 'bib-place' }, ordinal(place) + ' place'));
+      top.append(el('span', { class: 'bib-name' }, r.name));
+      const num = el('div', { class: 'bib-num' }, String(r.sessions));
+      num.append(el('small', {}, state.held ? ` of ${state.held} sessions` : ' sessions'));
+      const rate = r.rate === null ? '' : `${r.rate}% attendance`;
+      let text = r.milkMile ? `🥛 On course for the milk mile${rate ? ' · ' + rate : ''}`
+        : r.lastSession ? `${rate} · last seen ${fmtDate(r.lastSession)}` : 'No approved sessions yet';
+      if (r.pending) text += ` · ${r.pending} awaiting approval`;
+      bib.append(top, num, el('div', { class: 'bib-sub' }, text));
+      box.append(bib);
+    });
+    $('track-meta').textContent = state.held
+      ? `${state.held} session${state.held === 1 ? '' : 's'} held so far · race ends in December`
+      : 'Race ends in December';
+  }
+
+  // ---------- Feed & approval queue ----------
+  function photo(c, zoomable) {
     const img = el('img', { src: c.photoUrl, alt: `${c.advisorName} with ${c.witness}`, loading: 'lazy' });
-    const cap = el('figcaption');
-    cap.append(el('strong', {}, c.advisorName), ` with ${c.witness} · ${formatDate(c.sessionDate)}`);
-    fig.append(img, cap);
-    container.append(fig);
+    img.addEventListener('error', () => img.replaceWith(el('div', { class: 'noimg', role: 'img', 'aria-label': 'Photo unavailable' })));
+    if (zoomable) img.addEventListener('click', () => img.classList.toggle('zoom'));
+    return img;
   }
-}
 
-function formatDate(iso) {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function localToday() {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
-
-async function api(url, options) {
-  const res = await fetch(url, options);
-  const body = res.status === 204 ? null : await res.json();
-  if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
-  return body;
-}
-
-const state = { trackLength: 20 };
-
-async function refresh() {
-  const [{ trackLength, standings }, checkins] = await Promise.all([
-    api('/api/standings'),
-    api('/api/checkins'),
-  ]);
-  state.trackLength = trackLength;
-  $('#track-meta').textContent =
-    `Every work session photo moves you one step. First to ${trackLength} crosses the line.`;
-  drawTrack($('#track'), standings);
-  drawLeaderboard($('#leaderboard'), standings);
-  drawFeed($('#feed'), checkins);
-}
-
-function buildForm({ advisors, witnesses }) {
-  const advisorBox = $('#advisor-options');
-  for (const a of advisors) {
-    const label = el('label');
-    label.append(el('input', { type: 'checkbox', name: 'advisors', value: a.id }), a.name);
-    advisorBox.append(label);
+  function twoTap(label, confirmLabel, className, action) {
+    const btn = el('button', { type: 'button', class: className }, label);
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = confirmLabel;
+        setTimeout(() => { btn.dataset.armed = ''; if (!btn.disabled) btn.textContent = label; }, 4000);
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await action();
+      } catch (e) {
+        btn.disabled = false;
+        btn.dataset.armed = '';
+        btn.textContent = e.status === 401 ? 'Log in again' : 'Didn’t work. Try again';
+        if (e.status === 401) setApprover(null);
+      }
+    });
+    return btn;
   }
-  const witnessBox = $('#witness-options');
-  witnesses.forEach((w, i) => {
-    const label = el('label');
-    const input = el('input', { type: 'radio', name: 'witness', value: w, required: '' });
-    if (i === 0) input.checked = true;
-    label.append(input, w);
-    witnessBox.append(label);
-  });
 
-  const form = $('#checkin-form');
-  const status = $('#form-status');
-  const preview = $('#preview');
-  form.sessionDate.value = localToday();
-  form.sessionDate.max = localToday();
+  const removeCheckin = async (c) => {
+    await api(`/api/checkins/${c.id}`, { method: 'DELETE' });
+    await refresh();
+  };
 
-  form.photo.addEventListener('change', () => {
-    const file = form.photo.files[0];
-    if (preview.src) URL.revokeObjectURL(preview.src);
-    preview.hidden = !file;
-    if (file) preview.src = URL.createObjectURL(file);
-  });
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    status.className = 'status';
-    if (!form.querySelector('input[name="advisors"]:checked')) {
-      status.textContent = 'Pick at least one advisor.';
-      status.classList.add('error');
+  function drawFeed() {
+    const feed = $('feed');
+    feed.replaceChildren();
+    const items = state.checkins;
+    $('feed-meta').textContent = items.length ? `${items.length} check-in${items.length === 1 ? '' : 's'}` : '';
+    if (!items.length) {
+      feed.append(el('p', { class: 'empty' }, 'No check-ins yet. The first photo starts the race.'));
       return;
     }
-    const button = form.querySelector('button');
-    button.disabled = true;
-    status.textContent = 'Uploading…';
-    try {
-      const { ids } = await api('/api/checkins', { method: 'POST', body: new FormData(form) });
-      status.textContent = `Checked in! ${ids.length} runner${ids.length === 1 ? '' : 's'} moved up. 🏃`;
-      status.classList.add('ok');
-      form.photo.value = '';
-      preview.hidden = true;
-      form.querySelectorAll('input[name="advisors"]').forEach((i) => { i.checked = false; });
-      await refresh();
-    } catch (err) {
-      status.textContent = err.message;
-      status.classList.add('error');
-    } finally {
-      button.disabled = false;
+    for (const c of items) {
+      const fig = el('figure', c.approved ? {} : { class: 'is-pending' });
+      fig.append(photo(c, false));
+      const cap = el('figcaption');
+      cap.append(el('span', { class: 'tag', style: `--c: ${colorFor(c.advisorId)}` }), el('strong', {}, c.advisorName),
+        ` with ${c.witness}`, el('br'), fmtDate(c.sessionDate));
+      fig.append(cap);
+      if (!c.approved) fig.append(el('span', { class: 'badge' }, `Waiting for ${c.witness}`));
+      if (state.approver && c.approved) {
+        const wrap = el('div');
+        wrap.append(twoTap('Remove', 'Tap again to remove', 'remove', () => removeCheckin(c)));
+        fig.append(wrap);
+      }
+      feed.append(fig);
     }
-  });
-}
-
-(async function init() {
-  try {
-    buildForm(await api('/api/config'));
-    await refresh();
-  } catch (err) {
-    $('#track-meta').textContent = `Couldn't load the race: ${err.message}`;
   }
+
+  function drawQueue() {
+    const panel = $('queue-panel');
+    const pending = state.checkins.filter((c) => !c.approved).reverse();
+    panel.hidden = !state.approver || !pending.length;
+    if (panel.hidden) return;
+    $('queue-meta').textContent = `${pending.length} to review`;
+    const box = $('queue');
+    box.replaceChildren();
+    for (const c of pending) {
+      const item = el('div', { class: 'q-item' });
+      item.append(photo(c, true));
+      const body = el('div', { class: 'q-body' });
+      const title = el('div', { class: 'q-title' });
+      title.append(el('span', { class: 'tag', style: `--c: ${colorFor(c.advisorId)}` }), `${c.advisorName} with ${c.witness}`);
+      const submitted = new Date(c.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      body.append(title, el('div', { class: 'meta' }, `Session ${fmtDate(c.sessionDate)} · submitted ${submitted}`));
+      const actions = el('div', { class: 'q-actions' });
+      const approve = el('button', { type: 'button' }, 'Approve');
+      approve.addEventListener('click', async () => {
+        approve.disabled = true;
+        try {
+          await api(`/api/checkins/${c.id}/approve`, { method: 'POST' });
+          await refresh();
+        } catch (e) {
+          approve.disabled = false;
+          approve.textContent = e.status === 401 ? 'Log in again' : 'Didn’t work. Try again';
+          if (e.status === 401) setApprover(null);
+        }
+      });
+      actions.append(approve, twoTap('Reject', 'Tap again to reject', 'reject', () => removeCheckin(c)));
+      body.append(actions);
+      item.append(body);
+      box.append(item);
+    }
+  }
+
+  async function refresh() {
+    const [{ held, standings }, checkins] = await Promise.all([
+      api('/api/standings'),
+      api('/api/checkins'),
+    ]);
+    state.held = held;
+    state.standings = standings;
+    state.checkins = checkins;
+    drawRunners();
+    drawBibs();
+    drawQueue();
+    drawFeed();
+  }
+
+  // ---------- Check-in form ----------
+  function setStatus(id, msg, kind) {
+    const s = $(id);
+    s.textContent = msg;
+    s.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function buildCheckinForm() {
+    const ac = $('advisor-chips');
+    for (const a of state.advisors) {
+      const label = el('label', { style: `--c: ${colorFor(a.id)}` });
+      label.append(el('input', { type: 'checkbox', name: 'advisors', value: a.id, id: 'adv-' + a.id }),
+        el('span', { class: 'dot' }), a.name);
+      ac.append(label);
+    }
+    const wc = $('witness-chips');
+    state.approvers.forEach((w, i) => {
+      const label = el('label');
+      const input = el('input', { type: 'radio', name: 'witness', value: w, id: 'wit-' + w.toLowerCase() });
+      if (i === 0) input.checked = true;
+      label.append(input, w);
+      wc.append(label);
+    });
+    $('date').value = localToday();
+    $('date').max = localToday();
+
+    const resetDrop = () => $('drop-text').replaceChildren(el('strong', {}, 'Choose the photo'), el('br'), 'taken with Miguel or Frida');
+    $('photo').addEventListener('change', () => {
+      const f = $('photo').files[0];
+      const prev = $('preview');
+      if (prev.src.startsWith('blob:')) URL.revokeObjectURL(prev.src);
+      prev.hidden = !f;
+      if (f) {
+        prev.src = URL.createObjectURL(f);
+        $('drop-text').replaceChildren(el('strong', {}, f.name), el('br'), 'Tap to choose a different photo');
+      } else {
+        resetDrop();
+      }
+    });
+
+    $('checkin').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const file = $('photo').files[0];
+      const picked = [...form.querySelectorAll('input[name="advisors"]:checked')];
+      const date = $('date').value;
+      if (!file) return setStatus('status', 'Choose the photo first.', 'bad');
+      if (!picked.length) return setStatus('status', 'Tick at least one advisor who is in the photo.', 'bad');
+      if (!date) return setStatus('status', 'Pick the session date.', 'bad');
+
+      const body = new FormData();
+      body.append('photo', file);
+      picked.forEach((i) => body.append('advisors', i.value));
+      const witness = form.querySelector('input[name="witness"]:checked').value;
+      body.append('witness', witness);
+      body.append('sessionDate', date);
+
+      const btn = $('submit');
+      btn.disabled = true;
+      setStatus('status', 'Uploading photo…');
+      try {
+        await api('/api/checkins', { method: 'POST', body });
+        const names = picked.map((i) => state.advisors.find((a) => a.id === i.value).name);
+        setStatus('status', `Sent to ${witness} for approval. ${listNames(names)} will move up once it’s approved.`, 'ok');
+        $('photo').value = '';
+        $('preview').hidden = true;
+        resetDrop();
+        picked.forEach((i) => { i.checked = false; });
+        await refresh();
+      } catch (err) {
+        setStatus('status', err.message, 'bad');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  // ---------- Approver login ----------
+  function setApprover(name) {
+    state.approver = name;
+    $('login').hidden = Boolean(name);
+    $('logged-in').hidden = !name;
+    $('approver-intro').hidden = Boolean(name);
+    if (name) $('logged-in-text').textContent = `Logged in as ${name}. Photos waiting for approval appear at the top of the page.`;
+    drawQueue();
+    drawFeed();
+  }
+
+  function buildLogin(enabled) {
+    const chips = $('approver-chips');
+    state.approvers.forEach((w, i) => {
+      const label = el('label');
+      const input = el('input', { type: 'radio', name: 'approver', value: w, id: 'appr-' + w.toLowerCase() });
+      if (i === 0) input.checked = true;
+      label.append(input, w);
+      chips.append(label);
+    });
+    if (!enabled) {
+      $('login').hidden = true;
+      $('approver-intro').textContent = 'Approver login isn’t set up yet. The server needs an APPROVER_PASSWORD.';
+      return;
+    }
+    $('login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = e.currentTarget.querySelector('input[name="approver"]:checked').value;
+      const btn = $('login-submit');
+      btn.disabled = true;
+      try {
+        await api('/api/approver/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, password: $('password').value }),
+        });
+        $('password').value = '';
+        setStatus('login-status', '');
+        setApprover(name);
+        $('queue-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) {
+        setStatus('login-status', err.message, 'bad');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    $('logout').addEventListener('click', async () => {
+      await api('/api/approver/logout', { method: 'POST' }).catch(() => {});
+      setApprover(null);
+    });
+  }
+
+  // ---------- Boot ----------
+  (async () => {
+    drawTrackBase($('track'));
+    try {
+      const config = await api('/api/config');
+      state.advisors = config.advisors;
+      state.approvers = config.approvers;
+      buildCheckinForm();
+      buildLogin(config.approverLoginEnabled);
+      await refresh();
+      setApprover(config.approver);
+    } catch (err) {
+      $('track-meta').textContent = `Couldn’t load the race: ${err.message}`;
+    }
+  })();
 })();

@@ -6,6 +6,7 @@ const path = require('node:path');
 const express = require('express');
 const multer = require('multer');
 const db = require('./db');
+const { createAuth } = require('./auth');
 
 const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
 const IMAGE_EXTENSIONS = {
@@ -16,6 +17,8 @@ const IMAGE_EXTENSIONS = {
   'image/heic': '.heic',
   'image/heif': '.heif',
 };
+// Where the leader sits on the lap; everyone else is placed in proportion to them.
+const LEAD_POINT = 0.85;
 
 function isValidDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -29,8 +32,10 @@ function isFutureDate(value) {
   return value > tomorrow;
 }
 
-function createApp({ database, uploadDir, trackLength = 20, adminToken } = {}) {
+function createApp({ database, uploadDir, approverPassword, sessionSecret, trustProxy = false } = {}) {
   fs.mkdirSync(uploadDir, { recursive: true });
+
+  const auth = createAuth({ password: approverPassword, secret: sessionSecret, approvers: db.APPROVERS });
 
   const upload = multer({
     storage: multer.diskStorage({
@@ -45,31 +50,43 @@ function createApp({ database, uploadDir, trackLength = 20, adminToken } = {}) {
   const removePhoto = (filename) => {
     if (filename) fs.rmSync(path.join(uploadDir, path.basename(filename)), { force: true });
   };
+  const withPhotoUrl = (row) => ({ ...row, photoUrl: `/uploads/${row.photo}`, approved: Boolean(row.approvedAt) });
 
   const app = express();
+  if (trustProxy) app.set('trust proxy', trustProxy);
   app.use(express.json());
+  app.use(auth.identify);
 
-  app.get('/api/config', (_req, res) => {
-    res.json({ trackLength, witnesses: db.WITNESSES, advisors: db.listAdvisors(database) });
+  app.get('/api/config', (req, res) => {
+    res.json({
+      approvers: db.APPROVERS,
+      advisors: db.listAdvisors(database),
+      approverLoginEnabled: auth.enabled,
+      approver: req.approver,
+    });
   });
 
   app.get('/api/standings', (_req, res) => {
-    const standings = db.getStandings(database);
-    const fewest = Math.min(...standings.map((s) => s.sessions));
+    const { rows, held } = db.getStandings(database);
+    const counts = rows.map((r) => r.sessions);
+    const fewest = Math.min(...counts);
+    const most = Math.max(...counts);
     res.json({
-      trackLength,
-      standings: standings.map((s) => ({
-        ...s,
-        progress: Math.min(s.sessions / trackLength, 1),
-        // Everyone tied for last is on the hook for the milk mile.
-        milkMile: s.sessions === fewest,
+      held,
+      standings: rows.map((r) => ({
+        ...r,
+        rate: held ? Math.round((r.sessions / held) * 100) : null,
+        // Runners are placed relative to the leader, so they move up and down as counts change.
+        position: most ? LEAD_POINT * (r.sessions / most) : 0,
+        // Last place is flagged once someone has pulled ahead; a dead heat flags nobody yet.
+        milkMile: most > fewest && r.sessions === fewest,
       })),
     });
   });
 
   app.get('/api/checkins', (req, res) => {
-    const rows = db.listCheckins(database, req.query.advisor);
-    res.json(rows.map((r) => ({ ...r, photoUrl: `/uploads/${r.photo}` })));
+    const { advisor, status } = req.query;
+    res.json(db.listCheckins(database, { advisorId: advisor, status }).map(withPhotoUrl));
   });
 
   app.post('/api/checkins', (req, res, next) => {
@@ -93,8 +110,8 @@ function createApp({ database, uploadDir, trackLength = 20, adminToken } = {}) {
       if (unknown.length) return fail(400, `Unknown advisor: ${unknown.join(', ')}`);
 
       const { witness, sessionDate } = req.body;
-      if (!db.WITNESSES.includes(witness)) {
-        return fail(400, `Witness must be one of: ${db.WITNESSES.join(', ')}`);
+      if (!db.APPROVERS.includes(witness)) {
+        return fail(400, `Witness must be one of: ${db.APPROVERS.join(', ')}`);
       }
       if (!isValidDate(sessionDate)) return fail(400, 'sessionDate must be YYYY-MM-DD.');
       if (isFutureDate(sessionDate)) return fail(400, 'sessionDate cannot be in the future.');
@@ -106,15 +123,26 @@ function createApp({ database, uploadDir, trackLength = 20, adminToken } = {}) {
         photo: req.file.filename,
       });
       if (result.conflicts) {
-        return fail(409, `Already checked in for ${sessionDate}: ${result.conflicts.map((id) => names.get(id)).join(', ')}`);
+        const who = result.conflicts.map((id) => names.get(id)).join(', ');
+        return fail(409, `Already checked in for ${sessionDate}: ${who}`);
       }
       res.status(201).json({ ids: result.created, photoUrl: `/uploads/${req.file.filename}` });
     });
   });
 
-  app.delete('/api/checkins/:id', (req, res) => {
-    if (!adminToken) return res.status(403).json({ error: 'Deleting is disabled (no ADMIN_TOKEN set).' });
-    if (req.get('x-admin-token') !== adminToken) return res.status(401).json({ error: 'Bad admin token.' });
+  // Approver login (Miguel and Frida).
+  app.post('/api/approver/login', auth.login);
+  app.post('/api/approver/logout', auth.logout);
+
+  app.post('/api/checkins/:id/approve', auth.requireApprover, (req, res) => {
+    if (!db.approveCheckin(database, Number(req.params.id), req.approver)) {
+      return res.status(404).json({ error: 'Check-in not found.' });
+    }
+    res.status(204).end();
+  });
+
+  // Rejecting a pending check-in and removing an approved one are the same operation.
+  app.delete('/api/checkins/:id', auth.requireApprover, (req, res) => {
     const result = db.deleteCheckin(database, Number(req.params.id));
     if (!result) return res.status(404).json({ error: 'Check-in not found.' });
     removePhoto(result.orphanedPhoto);
