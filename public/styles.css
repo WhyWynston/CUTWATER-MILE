@@ -338,3 +338,13 @@ button.secondary { background: transparent; color: var(--ink); border: 1px solid
   border-radius: 4px;
   image-rendering: pixelated;
 }
+
+.header-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+button.music {
+  font-size: 0.9rem;
+  padding: 6px 14px;
+  background: var(--chip);
+  color: var(--ink);
+  justify-self: auto;
+}
+button.music[aria-pressed="true"] { background: var(--ink); color: var(--surface); }

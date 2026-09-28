@@ -18,6 +18,18 @@ npm start          # http://localhost:3000
 npm test
 ```
 
+### Hosting on Railway (about 5 minutes)
+
+1. Go to https://railway.com, sign in with GitHub, then **New Project → Deploy from GitHub repo**
+   and pick `cutwater-mile`.
+2. In the service's **Settings → Source**, set the branch to deploy.
+3. Right-click the service → **Attach volume**, mount path `/data`. Without this, every
+   redeploy wipes the attendance records and photos.
+4. **Variables → New variable:** `SESSION_SECRET` = any long random string.
+5. **Settings → Networking → Generate domain.** That URL is the app.
+
+The repo's `Dockerfile` and `railway.json` handle the build, `DATA_DIR=/data`, and the port.
+
 ### Configuration (environment variables)
 
 | Variable            | Default   | What it does                                                                    |

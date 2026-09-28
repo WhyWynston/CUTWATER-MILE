@@ -9,6 +9,7 @@
   const SPRITES = {
     alok: { src: 'characters/alok.png', w: 374, h: 536, head: { x: 204, y: 150, r: 82 } },
     jaansi: { src: 'characters/jaansi.png', w: 376, h: 508, head: { x: 210, y: 150, r: 82 } },
+    ethelyn: { src: 'characters/ethelyn.png', w: 486, h: 594, head: { x: 294, y: 188, r: 92 } },
   };
   const TOKEN_R = 24;
 
@@ -423,9 +424,29 @@
     });
   }
 
+  // ---------- Music ----------
+  // Browsers block sound until someone taps, so music starts from the button.
+  function setupMusic() {
+    const audio = $('theme');
+    const btn = $('music');
+    const sync = () => {
+      const on = !audio.paused;
+      btn.setAttribute('aria-pressed', String(on));
+      btn.textContent = on ? '♫ Music on' : '♪ Play music';
+    };
+    btn.addEventListener('click', () => {
+      if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+    });
+    audio.addEventListener('play', sync);
+    audio.addEventListener('pause', sync);
+    audio.volume = 0.4;
+    sync();
+  }
+
   // ---------- Boot ----------
   (async () => {
     drawTrackBase($('track'));
+    setupMusic();
     try {
       const config = await api('/api/config');
       state.advisors = config.advisors;
