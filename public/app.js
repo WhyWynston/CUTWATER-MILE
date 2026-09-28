@@ -4,6 +4,14 @@
   const COLORS = { alok: 'var(--alok)', ethelyn: 'var(--ethelyn)', jaansi: 'var(--jaansi)' };
   const colorFor = (id) => COLORS[id] || 'var(--accent)';
 
+  // Pixel-art sprites. `head` is the head's centre and radius in the image's own pixels,
+  // used to crop the face into the round runner token.
+  const SPRITES = {
+    alok: { src: 'characters/alok.png', w: 374, h: 536, head: { x: 204, y: 150, r: 82 } },
+    jaansi: { src: 'characters/jaansi.png', w: 376, h: 508, head: { x: 210, y: 150, r: 82 } },
+  };
+  const TOKEN_R = 24;
+
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const TRACK = { cx: 400, cy: 220, halfStraight: 190, laneRadii: [175, 140, 105], laneWidth: 35 };
 
@@ -106,8 +114,21 @@
       if (!g) {
         g = el('svg:g', { class: 'runner', 'data-id': a.id });
         g.append(el('svg:title'));
-        g.append(el('svg:circle', { r: 24, fill: colorFor(a.id) }));
-        g.append(el('svg:text', { class: 'initial', 'text-anchor': 'middle', dy: 9 }, a.name[0]));
+        g.append(el('svg:circle', { r: TOKEN_R, fill: colorFor(a.id) }));
+        const sprite = SPRITES[a.id];
+        if (sprite) {
+          const k = TOKEN_R / sprite.head.r;
+          const clip = el('svg:clipPath', { id: 'face-' + a.id });
+          clip.append(el('svg:circle', { r: TOKEN_R - 2 }));
+          g.append(clip);
+          g.append(el('svg:image', {
+            href: sprite.src, width: sprite.w * k, height: sprite.h * k,
+            x: -sprite.head.x * k, y: -sprite.head.y * k, 'clip-path': `url(#face-${a.id})`,
+          }));
+          g.append(el('svg:circle', { class: 'ring', r: TOKEN_R - 1, fill: 'none', style: `stroke: ${colorFor(a.id)}` }));
+        } else {
+          g.append(el('svg:text', { class: 'initial', 'text-anchor': 'middle', dy: 9 }, a.name[0]));
+        }
         g.append(el('svg:text', { class: 'milk', x: 24, y: -18 }, '🥛'));
         layer.append(g);
       }
@@ -135,6 +156,10 @@
         : r.lastSession ? `${rate} · last seen ${fmtDate(r.lastSession)}` : 'No approved sessions yet';
       if (r.pending) text += ` · ${r.pending} awaiting approval`;
       bib.append(top, num, el('div', { class: 'bib-sub' }, text));
+      if (SPRITES[r.id]) {
+        bib.classList.add('has-sprite');
+        bib.append(el('img', { class: 'bib-sprite', src: SPRITES[r.id].src, alt: '' }));
+      }
       box.append(bib);
     });
     $('track-meta').textContent = state.held
@@ -336,6 +361,7 @@
   const isApprover = () => Boolean(state.user?.approver);
 
   function tickSelf() {
+    document.querySelectorAll('input[name="advisors"]').forEach((i) => { i.checked = false; });
     const me = state.user && state.advisors.find((a) => a.name === state.user.name);
     if (me) $('adv-' + me.id).checked = true;
   }

@@ -14,7 +14,7 @@ Requires Node.js 22.13 or newer (it uses the built-in `node:sqlite`).
 
 ```bash
 npm install
-APPROVER_PASSWORD='pick-something' npm start   # http://localhost:3000
+npm start          # http://localhost:3000
 npm test
 ```
 
@@ -22,40 +22,52 @@ npm test
 
 | Variable            | Default   | What it does                                                                    |
 | ------------------- | --------- | ------------------------------------------------------------------------------- |
-| `APPROVER_PASSWORD` | _(unset)_ | Password Miguel and Frida use to log in and approve. Approval is off until set. |
-| `SESSION_SECRET`    | random    | Signs approver logins. Set it so logins survive server restarts.                |
+| `PASSWORDS`         | see below | `Name:password,Name:password` for everyone who logs in                          |
+| `SESSION_SECRET`    | random    | Signs logins. Set it so people stay logged in across server restarts.           |
 | `PORT`              | `3000`    | HTTP port                                                                       |
 | `DATA_DIR`          | `./data`  | Where the SQLite database (`attendance.db`) and `uploads/` live                 |
 | `TRUST_PROXY`       | _(unset)_ | Set to `1` behind a hosting proxy (Railway, Render, Fly) so cookies are Secure  |
 
 Back up `DATA_DIR`. It holds all attendance records and photos.
 
+### Logins
+
+Everyone has their own password. The defaults are in `server.js`; set `PASSWORDS` to change
+them. This is a small internal tool, so they're deliberately simple.
+
+| Person  | Can                                   |
+| ------- | ------------------------------------- |
+| Ethelyn, Alok, Jaansi | Log sessions              |
+| Miguel, Frida         | Log sessions, approve, reject and remove check-ins |
+
 ## How it works
 
-- **Advisors don't log in.** Anyone with the link can submit a check-in. It shows as
+- **Everyone logs in** in the "Log a session" panel. A new check-in shows as
   "Waiting for Miguel/Frida" and doesn't count yet.
-- **Miguel and Frida log in** with the approver password at the bottom of the page. A
-  "Waiting for approval" list then appears at the top, where they approve or reject each
-  photo. Rejecting deletes the check-in so the advisor can resubmit.
+- **Miguel and Frida** see a "Waiting for approval" list at the top of the page, where they
+  approve or reject each photo. Rejecting deletes the check-in so the advisor can resubmit.
 - **One check-in per advisor per date.** A group photo can check in several advisors at
   once. If any of them already has a check-in for that date, the whole upload is refused.
 - **Standings** count approved sessions only. "Sessions held" is the number of dates with
   at least one approved check-in, and attendance % is measured against it.
 - **Milk mile:** once someone has pulled ahead, everyone tied for the fewest sessions is
   flagged 🥛.
-- Approver logins are signed, HttpOnly, SameSite=Strict cookies that last 30 days. Five wrong
+- Logins are signed, HttpOnly, SameSite=Strict cookies that last 30 days. Five wrong
   passwords from one address lock login for 15 minutes.
+- **Character art** lives in `public/characters/`. A sprite's face becomes that advisor's
+  runner token on the track and shows on their standings card. To add one, drop the PNG in
+  that folder and add it to `SPRITES` at the top of `public/app.js`.
 
 ## API
 
 | Method   | Path                          | Auth     | Notes                                                                                     |
 | -------- | ----------------------------- | -------- | ----------------------------------------------------------------------------------------- |
-| `GET`    | `/api/config`                 |          | Advisors, approvers, and who is logged in                                                 |
+| `GET`    | `/api/config`                 |          | Advisors, approvers, who can log in, and who is logged in                                 |
 | `GET`    | `/api/standings`              |          | Approved sessions, attendance %, track position, milk-mile flag; plus sessions held       |
 | `GET`    | `/api/checkins`               |          | `?advisor=<id>` and `?status=pending\|approved` are optional filters                     |
-| `POST`   | `/api/checkins`               |          | `multipart/form-data`: `photo`, `advisors` (repeatable id), `witness`, `sessionDate`      |
-| `POST`   | `/api/approver/login`         |          | JSON `{ name: "Miguel" \| "Frida", password }`                                            |
-| `POST`   | `/api/approver/logout`        |          |                                                                                           |
+| `POST`   | `/api/checkins`               | anyone   | `multipart/form-data`: `photo`, `advisors` (repeatable id), `witness`, `sessionDate`      |
+| `POST`   | `/api/login`                  |          | JSON `{ name, password }`                                                                 |
+| `POST`   | `/api/logout`                 |          |                                                                                           |
 | `POST`   | `/api/checkins/:id/approve`   | approver |                                                                                           |
 | `DELETE` | `/api/checkins/:id`           | approver | Reject a pending check-in or remove an approved one                                       |
 
@@ -64,9 +76,10 @@ Back up `DATA_DIR`. It holds all attendance records and photos.
 ```
 server.js         entry point (reads env, opens DB, starts server)
 src/db.js         SQLite schema, seed data and queries
-src/auth.js       approver password login (signed cookies, rate limiting)
+src/auth.js       per-person password login (signed cookies, rate limiting)
 src/app.js        Express app: API, uploads, static files
 public/           frontend (racetrack, standings, approval queue, check-in form, photo feed)
+public/characters pixel-art sprites for the advisors
 test/             API tests (node:test)
 ```
 

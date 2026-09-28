@@ -324,3 +324,17 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 input[type="password"] { max-width: 320px; }
 button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
 .logged-in { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+
+.runner circle.ring { stroke-width: 3; }
+.bib.has-sprite { min-height: 150px; }
+.bib.has-sprite .bib-num, .bib.has-sprite .bib-sub { padding-right: 86px; }
+.bib-place { white-space: nowrap; }
+.bib-sprite {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 76px;
+  height: auto;
+  border-radius: 4px;
+  image-rendering: pixelated;
+}
