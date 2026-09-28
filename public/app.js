@@ -8,7 +8,7 @@
   const TRACK = { cx: 400, cy: 220, halfStraight: 190, laneRadii: [175, 140, 105], laneWidth: 35 };
 
   const $ = (id) => document.getElementById(id);
-  const state = { advisors: [], approvers: [], approver: null, standings: [], held: 0, checkins: [] };
+  const state = { advisors: [], approvers: [], user: null, standings: [], held: 0, checkins: [] };
 
   function el(tag, attrs, text) {
     const svg = tag.startsWith('svg:');
@@ -166,7 +166,7 @@
         btn.disabled = false;
         btn.dataset.armed = '';
         btn.textContent = e.status === 401 ? 'Log in again' : 'Didn’t work. Try again';
-        if (e.status === 401) setApprover(null);
+        if (e.status === 401) setUser(null);
       }
     });
     return btn;
@@ -194,7 +194,7 @@
         ` with ${c.witness}`, el('br'), fmtDate(c.sessionDate));
       fig.append(cap);
       if (!c.approved) fig.append(el('span', { class: 'badge' }, `Waiting for ${c.witness}`));
-      if (state.approver && c.approved) {
+      if (isApprover() && c.approved) {
         const wrap = el('div');
         wrap.append(twoTap('Remove', 'Tap again to remove', 'remove', () => removeCheckin(c)));
         fig.append(wrap);
@@ -206,7 +206,7 @@
   function drawQueue() {
     const panel = $('queue-panel');
     const pending = state.checkins.filter((c) => !c.approved).reverse();
-    panel.hidden = !state.approver || !pending.length;
+    panel.hidden = !isApprover() || !pending.length;
     if (panel.hidden) return;
     $('queue-meta').textContent = `${pending.length} to review`;
     const box = $('queue');
@@ -229,7 +229,7 @@
         } catch (e) {
           approve.disabled = false;
           approve.textContent = e.status === 401 ? 'Log in again' : 'Didn’t work. Try again';
-          if (e.status === 401) setApprover(null);
+          if (e.status === 401) setUser(null);
         }
       });
       actions.append(approve, twoTap('Reject', 'Tap again to reject', 'reject', () => removeCheckin(c)));
@@ -321,55 +321,69 @@
         $('preview').hidden = true;
         resetDrop();
         picked.forEach((i) => { i.checked = false; });
+        tickSelf();
         await refresh();
       } catch (err) {
         setStatus('status', err.message, 'bad');
+        if (err.status === 401) setUser(null);
       } finally {
         btn.disabled = false;
       }
     });
   }
 
-  // ---------- Approver login ----------
-  function setApprover(name) {
-    state.approver = name;
-    $('login').hidden = Boolean(name);
-    $('logged-in').hidden = !name;
-    $('approver-intro').hidden = Boolean(name);
-    if (name) $('logged-in-text').textContent = `Logged in as ${name}. Photos waiting for approval appear at the top of the page.`;
+  // ---------- Login ----------
+  const isApprover = () => Boolean(state.user?.approver);
+
+  function tickSelf() {
+    const me = state.user && state.advisors.find((a) => a.name === state.user.name);
+    if (me) $('adv-' + me.id).checked = true;
+  }
+
+  function setUser(user) {
+    state.user = user;
+    $('login').hidden = Boolean(user);
+    $('account').hidden = !user;
+    $('checkin').hidden = !user;
+    if (user) {
+      $('account-text').textContent = user.approver
+        ? `Logged in as ${user.name}. Photos waiting for your approval appear at the top of the page.`
+        : `Logged in as ${user.name}.`;
+      tickSelf();
+    }
     drawQueue();
     drawFeed();
   }
 
-  function buildLogin(enabled) {
-    const chips = $('approver-chips');
-    state.approvers.forEach((w, i) => {
+  function buildLogin(people) {
+    const chips = $('people-chips');
+    people.forEach((name) => {
       const label = el('label');
-      const input = el('input', { type: 'radio', name: 'approver', value: w, id: 'appr-' + w.toLowerCase() });
-      if (i === 0) input.checked = true;
-      label.append(input, w);
+      label.append(el('input', { type: 'radio', name: 'person', value: name, id: 'person-' + name.toLowerCase() }), name);
       chips.append(label);
     });
-    if (!enabled) {
-      $('login').hidden = true;
-      $('approver-intro').textContent = 'Approver login isn’t set up yet. The server needs an APPROVER_PASSWORD.';
+    if (!people.length) {
+      $('login').replaceChildren(el('p', { class: 'notice' }, 'Logins aren’t set up yet. The server needs a PASSWORDS setting.'));
       return;
     }
     $('login').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const name = e.currentTarget.querySelector('input[name="approver"]:checked').value;
+      const name = e.currentTarget.querySelector('input[name="person"]:checked')?.value;
+      if (!name) return setStatus('login-status', 'Pick your name.', 'bad');
       const btn = $('login-submit');
       btn.disabled = true;
       try {
-        await api('/api/approver/login', {
+        const { user } = await api('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, password: $('password').value }),
         });
         $('password').value = '';
         setStatus('login-status', '');
-        setApprover(name);
-        $('queue-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setUser(user);
+        if (user.approver && !$('queue-panel').hidden) {
+          $('queue-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
       } catch (err) {
         setStatus('login-status', err.message, 'bad');
       } finally {
@@ -377,8 +391,9 @@
       }
     });
     $('logout').addEventListener('click', async () => {
-      await api('/api/approver/logout', { method: 'POST' }).catch(() => {});
-      setApprover(null);
+      await api('/api/logout', { method: 'POST' }).catch(() => {});
+      setStatus('status', '');
+      setUser(null);
     });
   }
 
@@ -390,9 +405,9 @@
       state.advisors = config.advisors;
       state.approvers = config.approvers;
       buildCheckinForm();
-      buildLogin(config.approverLoginEnabled);
+      buildLogin(config.people);
       await refresh();
-      setApprover(config.approver);
+      setUser(config.user);
     } catch (err) {
       $('track-meta').textContent = `Couldn’t load the race: ${err.message}`;
     }

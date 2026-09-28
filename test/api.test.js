@@ -13,9 +13,10 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
   'base64'
 );
-const PASSWORD = 'milk-mile-2026';
+const PASSWORDS = 'Miguel:dog,Frida:cat,Jaansi:orange,Alok:brown,Ethelyn:blueprint';
+const PW = { Miguel: 'dog', Frida: 'cat', Jaansi: 'orange', Alok: 'brown', Ethelyn: 'blueprint' };
 
-let server, base, uploadDir, tmp;
+let server, base, uploadDir, tmp, advisorCookie;
 
 async function start(options = {}) {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cutwater-'));
@@ -23,13 +24,14 @@ async function start(options = {}) {
   const app = createApp({
     database: openDb(':memory:'),
     uploadDir,
-    approverPassword: PASSWORD,
+    passwords: PASSWORDS,
     sessionSecret: 'test-secret',
     ...options,
   });
   server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
+  advisorCookie = (await login('Alok')).cookie;
 }
 
 beforeEach(() => start());
@@ -39,17 +41,17 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-function checkin({ advisors = ['alok'], witness = 'Miguel', sessionDate = '2026-09-01', photo = true } = {}) {
+function checkin({ advisors = ['alok'], witness = 'Miguel', sessionDate = '2026-09-01', photo = true, cookie = advisorCookie } = {}) {
   const form = new FormData();
   for (const a of advisors) form.append('advisors', a);
   form.append('witness', witness);
   form.append('sessionDate', sessionDate);
   if (photo) form.append('photo', new Blob([PNG], { type: 'image/png' }), 'pic.png');
-  return fetch(`${base}/api/checkins`, { method: 'POST', body: form });
+  return fetch(`${base}/api/checkins`, { method: 'POST', body: form, headers: cookie ? { cookie } : {} });
 }
 
-async function login(name = 'Miguel', password = PASSWORD) {
-  const res = await fetch(`${base}/api/approver/login`, {
+async function login(name = 'Miguel', password = PW[name]) {
+  const res = await fetch(`${base}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, password }),
@@ -70,8 +72,8 @@ test('config lists the advisors and approvers', async () => {
   const cfg = await json('/api/config');
   assert.deepEqual(cfg.advisors.map((a) => a.name), ['Alok', 'Ethelyn', 'Jaansi']);
   assert.deepEqual(cfg.approvers, ['Miguel', 'Frida']);
-  assert.equal(cfg.approverLoginEnabled, true);
-  assert.equal(cfg.approver, null);
+  assert.deepEqual(cfg.people.sort(), ['Alok', 'Ethelyn', 'Frida', 'Jaansi', 'Miguel']);
+  assert.equal(cfg.user, null);
 });
 
 test('everyone starts at zero with nobody flagged for the milk mile', async () => {
@@ -103,14 +105,36 @@ test('a new check-in is pending and does not count until approved', async () => 
   assert.equal(ethelyn.rate, 100);
   const [approved] = await json('/api/checkins?status=approved');
   assert.equal(approved.approvedBy, 'Frida');
+  assert.equal(approved.submittedBy, 'Alok');
 });
 
-test('approving and removing require the approver password', async () => {
+test('submitting a check-in requires logging in', async () => {
+  const res = await checkin({ cookie: null });
+  assert.equal(res.status, 401);
+  assert.deepEqual(uploads(), []);
+});
+
+test('each person logs in with their own password', async () => {
+  for (const name of Object.keys(PW)) {
+    const { res } = await login(name);
+    assert.equal(res.status, 200, name);
+    assert.equal((await res.json()).user.approver, name === 'Miguel' || name === 'Frida');
+  }
+  assert.equal((await login('Alok', 'dog')).res.status, 401, "someone else's password");
+});
+
+test('advisors cannot approve or remove check-ins', async () => {
+  const [id] = (await (await checkin()).json()).ids;
+  assert.equal((await approve(id, advisorCookie)).status, 403);
+  assert.equal((await remove(id, advisorCookie)).status, 403);
+});
+
+test('approving and removing require an approver login', async () => {
   const [id] = (await (await checkin()).json()).ids;
 
   assert.equal((await approve(id)).status, 401);
   assert.equal((await remove(id)).status, 401);
-  assert.equal((await approve(id, 'cm_approver=Miguel.99999999999999.forged')).status, 401);
+  assert.equal((await approve(id, 'cm_session=Miguel.99999999999999.forged')).status, 401);
 
   const bad = await login('Miguel', 'wrong');
   assert.equal(bad.res.status, 401);
@@ -121,27 +145,27 @@ test('approving and removing require the approver password', async () => {
   assert.equal(res.status, 200);
   assert.match(res.headers.get('set-cookie'), /HttpOnly/);
   assert.match(res.headers.get('set-cookie'), /SameSite=Strict/);
-  assert.equal((await json('/api/config', { cookie })).approver, 'Miguel');
+  assert.deepEqual((await json('/api/config', { cookie })).user, { name: 'Miguel', approver: true });
   assert.equal((await approve(id, cookie)).status, 204);
 });
 
 test('login is rate limited after repeated wrong passwords', async () => {
   for (let i = 0; i < 5; i++) assert.equal((await login('Miguel', 'nope')).res.status, 401);
-  assert.equal((await login('Miguel', PASSWORD)).res.status, 429);
+  assert.equal((await login('Miguel')).res.status, 429);
 });
 
-test('logout clears the approver session', async () => {
-  const res = await fetch(`${base}/api/approver/logout`, { method: 'POST' });
+test('logout clears the session', async () => {
+  const res = await fetch(`${base}/api/logout`, { method: 'POST' });
   assert.equal(res.status, 204);
   assert.match(res.headers.get('set-cookie'), /Max-Age=0/);
 });
 
-test('approver login is disabled without a password', async () => {
+test('people without a password cannot log in', async () => {
   server.close();
   fs.rmSync(tmp, { recursive: true, force: true });
-  await start({ approverPassword: undefined });
-  assert.equal((await json('/api/config')).approverLoginEnabled, false);
-  assert.equal((await login('Miguel', '')).res.status, 503);
+  await start({ passwords: 'Miguel:dog' });
+  assert.deepEqual((await json('/api/config')).people, ['Miguel']);
+  assert.equal((await login('Alok', 'brown')).res.status, 400);
 });
 
 test('standings rank by approved attendance, place runners relative to the leader, and flag last place', async () => {
@@ -211,7 +235,7 @@ test('rejects non-image uploads', async () => {
   form.append('witness', 'Miguel');
   form.append('sessionDate', '2026-09-01');
   form.append('photo', new Blob(['hi'], { type: 'text/plain' }), 'x.txt');
-  const res = await fetch(`${base}/api/checkins`, { method: 'POST', body: form });
+  const res = await fetch(`${base}/api/checkins`, { method: 'POST', body: form, headers: { cookie: advisorCookie } });
   assert.equal(res.status, 400);
   assert.deepEqual(uploads(), []);
 });

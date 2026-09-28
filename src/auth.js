@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 
-const COOKIE = 'cm_approver';
+const COOKIE = 'cm_session';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
@@ -21,33 +21,54 @@ function parseCookies(header = '') {
 }
 
 /**
- * Password login for Miguel and Frida. Sessions are stateless signed cookies:
- * `<name>.<expiry>.<hmac>`. Changing the password or the secret signs everyone out.
+ * Parses "Name:password,Name:password" into { Name: password }, matching names
+ * case-insensitively against `people`. Unknown names are reported, not silently kept.
  */
-function createAuth({ password, secret, approvers, now = () => Date.now() }) {
-  const enabled = typeof password === 'string' && password.length > 0;
-  const key = sha256(`${secret || crypto.randomBytes(32).toString('hex')}:${password || ''}`);
-  const passwordHash = sha256(password || '');
+function parsePasswords(spec, people) {
+  const accounts = {};
+  const unknown = [];
+  for (const entry of String(spec || '').split(',')) {
+    const i = entry.indexOf(':');
+    if (i <= 0) continue;
+    const given = entry.slice(0, i).trim();
+    const password = entry.slice(i + 1).trim();
+    const name = people.find((p) => p.toLowerCase() === given.toLowerCase());
+    if (!name) unknown.push(given);
+    else if (password) accounts[name] = password;
+  }
+  return { accounts, unknown };
+}
+
+/**
+ * Per-person password login. Sessions are stateless signed cookies:
+ * `<name>.<expiry>.<hmac>`. Changing a person's password signs them out.
+ */
+function createAuth({ accounts, approvers, secret, now = () => Date.now() }) {
+  const serverKey = sha256(secret || crypto.randomBytes(32).toString('hex'));
+  const passwordHashes = new Map(Object.entries(accounts).map(([name, pw]) => [name, sha256(pw)]));
   const attempts = new Map(); // ip -> { count, resetAt }
 
-  const sign = (payload) => crypto.createHmac('sha256', key).update(payload).digest('base64url');
+  // Each person's signing key includes their password, so changing it revokes their sessions.
+  const sign = (name, payload) =>
+    crypto.createHmac('sha256', serverKey).update(`${accounts[name]}\n${payload}`).digest('base64url');
 
   function issue(name) {
     const payload = `${encodeURIComponent(name)}.${now() + SESSION_MS}`;
-    return `${payload}.${sign(payload)}`;
+    return `${payload}.${sign(name, payload)}`;
   }
 
   function verify(token) {
-    if (!enabled || typeof token !== 'string') return null;
+    if (typeof token !== 'string') return null;
     const parts = token.split('.');
     if (parts.length !== 3) return null;
+    const name = decodeURIComponent(parts[0]);
+    if (!passwordHashes.has(name)) return null;
     const payload = `${parts[0]}.${parts[1]}`;
-    const expected = Buffer.from(sign(payload));
+    const expected = Buffer.from(sign(name, payload));
     const given = Buffer.from(parts[2]);
     if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
     if (Number(parts[1]) < now()) return null;
-    const name = decodeURIComponent(parts[0]);
-    return approvers.includes(name) ? name : null;
+    return { name, approver: approvers.includes(name) };
   }
 
   function cookieHeader(req, value, maxAgeMs) {
@@ -57,8 +78,7 @@ function createAuth({ password, secret, approvers, now = () => Date.now() }) {
 
   function rateLimited(ip) {
     const entry = attempts.get(ip);
-    if (!entry || entry.resetAt < now()) return false;
-    return entry.count >= MAX_ATTEMPTS;
+    return Boolean(entry && entry.resetAt >= now() && entry.count >= MAX_ATTEMPTS);
   }
 
   function recordFailure(ip) {
@@ -68,33 +88,39 @@ function createAuth({ password, secret, approvers, now = () => Date.now() }) {
   }
 
   return {
-    enabled,
+    /** Names that can log in. */
+    people: [...passwordHashes.keys()],
 
-    /** Express middleware: sets req.approver to "Miguel"/"Frida" or null. */
+    /** Express middleware: sets req.user to { name, approver } or null. */
     identify(req, _res, next) {
-      req.approver = verify(parseCookies(req.headers.cookie)[COOKIE]);
+      req.user = verify(parseCookies(req.headers.cookie)[COOKIE]);
       next();
     },
 
+    requireLogin(req, res, next) {
+      if (req.user) return next();
+      res.status(401).json({ error: 'Log in to do that.' });
+    },
+
     requireApprover(req, res, next) {
-      if (req.approver) return next();
-      res.status(401).json({ error: 'Log in as Miguel or Frida to do that.' });
+      if (req.user?.approver) return next();
+      res.status(req.user ? 403 : 401).json({ error: 'Only Miguel or Frida can do that.' });
     },
 
     login(req, res) {
-      if (!enabled) return res.status(503).json({ error: 'Approver login is not set up (no APPROVER_PASSWORD).' });
       const ip = req.ip || 'unknown';
       if (rateLimited(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
 
-      const { name, password: given } = req.body || {};
-      if (!approvers.includes(name)) return res.status(400).json({ error: `Pick ${approvers.join(' or ')}.` });
-      if (typeof given !== 'string' || !crypto.timingSafeEqual(sha256(given), passwordHash)) {
+      const { name, password } = req.body || {};
+      const expected = passwordHashes.get(name);
+      if (!expected) return res.status(400).json({ error: 'Pick your name.' });
+      if (typeof password !== 'string' || !crypto.timingSafeEqual(sha256(password), expected)) {
         recordFailure(ip);
         return res.status(401).json({ error: 'Wrong password.' });
       }
       attempts.delete(ip);
       res.setHeader('Set-Cookie', cookieHeader(req, issue(name), SESSION_MS));
-      res.json({ approver: name });
+      res.json({ user: { name, approver: approvers.includes(name) } });
     },
 
     logout(req, res) {
@@ -104,4 +130,4 @@ function createAuth({ password, secret, approvers, now = () => Date.now() }) {
   };
 }
 
-module.exports = { createAuth };
+module.exports = { createAuth, parsePasswords };

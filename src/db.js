@@ -24,6 +24,7 @@ const SCHEMA = `
     session_date TEXT NOT NULL,
     photo        TEXT NOT NULL,
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    submitted_by TEXT,
     approved_by  TEXT,
     approved_at  TEXT,
     UNIQUE (advisor_id, session_date)
@@ -38,6 +39,7 @@ function openDb(filename) {
   const columns = new Set(db.prepare('PRAGMA table_info(checkins)').all().map((c) => c.name));
   if (!columns.has('approved_by')) db.exec('ALTER TABLE checkins ADD COLUMN approved_by TEXT');
   if (!columns.has('approved_at')) db.exec('ALTER TABLE checkins ADD COLUMN approved_at TEXT');
+  if (!columns.has('submitted_by')) db.exec('ALTER TABLE checkins ADD COLUMN submitted_by TEXT');
   const seed = db.prepare('INSERT OR IGNORE INTO advisors (id, name) VALUES (?, ?)');
   for (const a of ADVISORS) seed.run(a.id, a.name);
   return db;
@@ -70,7 +72,7 @@ function getStandings(db) {
 
 const CHECKIN_COLUMNS = `
   c.id, c.advisor_id AS advisorId, a.name AS advisorName, c.witness,
-  c.session_date AS sessionDate, c.photo, c.created_at AS createdAt,
+  c.session_date AS sessionDate, c.photo, c.created_at AS createdAt, c.submitted_by AS submittedBy,
   c.approved_by AS approvedBy, c.approved_at AS approvedAt`;
 
 function listCheckins(db, { advisorId, status } = {}) {
@@ -91,7 +93,7 @@ function listCheckins(db, { advisorId, status } = {}) {
  * Returns { created } on success or { conflicts } naming advisors who already
  * have a check-in (pending or approved) for that date; nothing is written then.
  */
-function createCheckins(db, { advisorIds, witness, sessionDate, photo }) {
+function createCheckins(db, { advisorIds, witness, sessionDate, photo, submittedBy = null }) {
   const existing = db.prepare(
     'SELECT 1 FROM checkins WHERE session_date = ? AND advisor_id = ?'
   );
@@ -99,13 +101,13 @@ function createCheckins(db, { advisorIds, witness, sessionDate, photo }) {
   if (conflicts.length) return { conflicts };
 
   const insert = db.prepare(
-    'INSERT INTO checkins (advisor_id, witness, session_date, photo) VALUES (?, ?, ?, ?)'
+    'INSERT INTO checkins (advisor_id, witness, session_date, photo, submitted_by) VALUES (?, ?, ?, ?, ?)'
   );
   const created = [];
   db.exec('BEGIN');
   try {
     for (const id of advisorIds) {
-      created.push(Number(insert.run(id, witness, sessionDate, photo).lastInsertRowid));
+      created.push(Number(insert.run(id, witness, sessionDate, photo, submittedBy).lastInsertRowid));
     }
     db.exec('COMMIT');
   } catch (err) {

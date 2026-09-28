@@ -6,7 +6,7 @@ const path = require('node:path');
 const express = require('express');
 const multer = require('multer');
 const db = require('./db');
-const { createAuth } = require('./auth');
+const { createAuth, parsePasswords } = require('./auth');
 
 const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
 const IMAGE_EXTENSIONS = {
@@ -32,10 +32,15 @@ function isFutureDate(value) {
   return value > tomorrow;
 }
 
-function createApp({ database, uploadDir, approverPassword, sessionSecret, trustProxy = false } = {}) {
+function createApp({ database, uploadDir, passwords, sessionSecret, trustProxy = false } = {}) {
   fs.mkdirSync(uploadDir, { recursive: true });
 
-  const auth = createAuth({ password: approverPassword, secret: sessionSecret, approvers: db.APPROVERS });
+  const people = [...db.listAdvisors(database).map((a) => a.name), ...db.APPROVERS];
+  const { accounts, unknown } = parsePasswords(passwords, people);
+  if (unknown.length) console.warn(`PASSWORDS has names nobody here matches: ${unknown.join(', ')}`);
+  const missing = people.filter((p) => !accounts[p]);
+  if (missing.length) console.warn(`No password set for: ${missing.join(', ')} (they can't log in).`);
+  const auth = createAuth({ accounts, approvers: db.APPROVERS, secret: sessionSecret });
 
   const upload = multer({
     storage: multer.diskStorage({
@@ -61,8 +66,8 @@ function createApp({ database, uploadDir, approverPassword, sessionSecret, trust
     res.json({
       approvers: db.APPROVERS,
       advisors: db.listAdvisors(database),
-      approverLoginEnabled: auth.enabled,
-      approver: req.approver,
+      people: auth.people,
+      user: req.user,
     });
   });
 
@@ -89,7 +94,7 @@ function createApp({ database, uploadDir, approverPassword, sessionSecret, trust
     res.json(db.listCheckins(database, { advisorId: advisor, status }).map(withPhotoUrl));
   });
 
-  app.post('/api/checkins', (req, res, next) => {
+  app.post('/api/checkins', auth.requireLogin, (req, res, next) => {
     upload.single('photo')(req, res, (err) => {
       if (err instanceof multer.MulterError) {
         return res.status(400).json({ error: `Photo upload failed: ${err.message}` });
@@ -121,6 +126,7 @@ function createApp({ database, uploadDir, approverPassword, sessionSecret, trust
         witness,
         sessionDate,
         photo: req.file.filename,
+        submittedBy: req.user.name,
       });
       if (result.conflicts) {
         const who = result.conflicts.map((id) => names.get(id)).join(', ');
@@ -130,12 +136,12 @@ function createApp({ database, uploadDir, approverPassword, sessionSecret, trust
     });
   });
 
-  // Approver login (Miguel and Frida).
-  app.post('/api/approver/login', auth.login);
-  app.post('/api/approver/logout', auth.logout);
+  // Everyone logs in with their own password; Miguel and Frida can also approve.
+  app.post('/api/login', auth.login);
+  app.post('/api/logout', auth.logout);
 
   app.post('/api/checkins/:id/approve', auth.requireApprover, (req, res) => {
-    if (!db.approveCheckin(database, Number(req.params.id), req.approver)) {
+    if (!db.approveCheckin(database, Number(req.params.id), req.user.name)) {
       return res.status(404).json({ error: 'Check-in not found.' });
     }
     res.status(204).end();

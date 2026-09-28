@@ -38,8 +38,24 @@
   <div class="two-col">
     <section class="panel" aria-labelledby="log-h">
       <h2 id="log-h">Log a session</h2>
-      <p class="notice" id="form-notice" hidden></p>
-      <form id="checkin" novalidate>
+      <form id="login" novalidate>
+        <p class="notice">Log in with your name and password to check in. Miguel and Frida also approve photos from here.</p>
+        <fieldset class="field">
+          <legend>I'm</legend>
+          <div class="chips" id="people-chips"></div>
+        </fieldset>
+        <div class="field">
+          <label class="label" for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password">
+        </div>
+        <button type="submit" id="login-submit">Log in</button>
+        <p class="status" id="login-status" role="status" aria-live="polite"></p>
+      </form>
+      <div id="account" class="logged-in" hidden>
+        <p class="notice" id="account-text"></p>
+        <button type="button" id="logout" class="secondary">Log out</button>
+      </div>
+      <form id="checkin" novalidate hidden>
         <label class="photo-drop" id="drop">
           <input type="file" id="photo" name="photo" accept="image/*">
           <img id="preview" alt="Selected photo" hidden>
@@ -85,27 +101,6 @@
       <p class="meta" id="feed-meta"></p>
     </div>
     <div class="feed" id="feed"></div>
-  </section>
-
-  <section class="panel" id="approver-panel" aria-labelledby="approver-h">
-    <h2 id="approver-h">Approver login</h2>
-    <p class="notice" id="approver-intro">For Miguel and Frida. Log in to approve or reject photos.</p>
-    <form id="login" novalidate>
-      <fieldset class="field">
-        <legend>I'm</legend>
-        <div class="chips" id="approver-chips"></div>
-      </fieldset>
-      <div class="field">
-        <label class="label" for="password">Approver password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password">
-      </div>
-      <button type="submit" id="login-submit">Log in</button>
-      <p class="status" id="login-status" role="status" aria-live="polite"></p>
-    </form>
-    <div id="logged-in" class="logged-in" hidden>
-      <p class="notice" id="logged-in-text"></p>
-      <button type="button" id="logout" class="secondary">Log out</button>
-    </div>
   </section>
 </div>
 <script src="app.js"></script>
