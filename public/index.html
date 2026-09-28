@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cutwater Mile</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>CUTWATER <span>MILE</span></h1>
+    <p class="tagline">Show up. Snap a photo with Miguel or Frida. Move up the track.<br />
+      Last place runs the <strong>milk mile</strong>. 🥛</p>
+  </header>
+
+  <main>
+    <section class="card track-card" aria-labelledby="track-title">
+      <h2 id="track-title">The Race</h2>
+      <p class="muted" id="track-meta"></p>
+      <div class="track-wrap">
+        <svg id="track" viewBox="0 0 800 440" role="img" aria-label="Race track showing each advisor's progress"></svg>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="board-title">
+      <h2 id="board-title">Standings</h2>
+      <ol id="leaderboard" class="leaderboard"></ol>
+    </section>
+
+    <section class="card" aria-labelledby="checkin-title">
+      <h2 id="checkin-title">Log a Work Session</h2>
+      <form id="checkin-form">
+        <label class="field">
+          <span>Photo</span>
+          <input type="file" name="photo" accept="image/*" capture="environment" required />
+        </label>
+        <img id="preview" class="preview" alt="" hidden />
+
+        <fieldset class="field">
+          <legend>Who's in the photo?</legend>
+          <div id="advisor-options" class="chips"></div>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>Taken with</legend>
+          <div id="witness-options" class="chips"></div>
+        </fieldset>
+
+        <label class="field">
+          <span>Work session date</span>
+          <input type="date" name="sessionDate" required />
+        </label>
+
+        <button type="submit">Check in 🏁</button>
+        <p id="form-status" class="status" role="status"></p>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="feed-title">
+      <h2 id="feed-title">Photo Finish</h2>
+      <div id="feed" class="feed"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

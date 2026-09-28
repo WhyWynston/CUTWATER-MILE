@@ -1,0 +1,30 @@
+{
+  "name": "cutwater-mile",
+  "version": "1.0.0",
+  "description": "Attendance race for our project advisors - last place runs the milk mile",
+  "main": "server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WhyWynston/cutwater-mile.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WhyWynston/cutwater-mile/issues"
+  },
+  "homepage": "https://github.com/WhyWynston/cutwater-mile#readme",
+  "dependencies": {
+    "express": "^4.22.3",
+    "multer": "^2.4.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  }
+}
